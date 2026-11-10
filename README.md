@@ -239,6 +239,16 @@ MIT, see [`LICENSE`](LICENSE). The copyright holder line is a placeholder: fill 
 
 ---
 
+## Skills & technologies
+
+[![C++](https://img.shields.io/badge/C%2B%2B-cpp?logo=C%2B%2B&logoColor=white)](https://github.com/NirmalyaLenka/LINE-FOLLOWING-ROBOT-FOR-BPUT-ROBO-COMP) · [![C](https://img.shields.io/badge/C-00599C?logo=C&logoColor=white)](https://github.com/NirmalyaLenka/LINE-FOLLOWING-ROBOT-FOR-BPUT-ROBO-COMP)
+
+
+## How it works
+
+The firmware entry point is `main.ino`. Open the sketch in Arduino IDE, select the matching board and serial port, verify the pin mapping and required libraries, then compile and upload. Hardware behaviour must be validated on the actual board; a README alone does not prove the circuit is safe or working.
+
+
 ## Maintenance & Audit
 
 - **Audit date:** 10 November 2026
