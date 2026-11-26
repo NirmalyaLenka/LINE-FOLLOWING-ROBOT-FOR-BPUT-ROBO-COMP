@@ -1,16 +1,10 @@
 # BPUT T12 line-following and obstacle-avoidance robot
 
-An ESP32 robot that follows a line with a PD controller on six working digital IR sensors and
-passes a box obstacle on its right using a VL53L0X-compatible ToF sensor and a time-based
-state machine. This repository documents the final competition sketch for the BPUT Tech Carnival
-2026 T12 event and explains how to build, calibrate and tune the same class of robot for your own
-chassis.
+An ESP32 robot that follows a line with a PD controller and avoids a box obstacle on its right using a VL53L0X-compatible time-of-flight (ToF) sensor and a time-based state machine. The repository contains the competition sketch for the BPUT Tech Carnival 2026 T12 event, plus the hardware notes needed to wire and calibrate the reference design.
 
-> **Read first:** the hardware description for this project differs from the uploaded sketch in a
-> few places (notably IR1 is defective but still scanned by the code). They are listed in
-> [`docs/CODE_VS_BRIEF_MISMATCHES.md`](docs/CODE_VS_BRIEF_MISMATCHES.md). Nothing was fixed silently.
-> `src/main.ino` is the uploaded sketch with four constants changed to the reference values
-> (each tagged `CHANGED (repo)`).
+> **Important known limitation:** the reference build reports IR1 (GPIO14) as defective, but the firmware still samples it and includes it in the weighted line-position calculation. It is **not masked in software**, so a faulty IR1 signal can affect steering. Verify or repair that input before relying on the robot. The root-level `main.ino` source marks four reference-robot constant changes with `CHANGED (repo)`; no firmware logic was changed during this documentation review.
+
+This repository has root-level documentation files rather than separate `docs/`, `hardware/`, or `diagrams/` directories. Use the links below as the current file map.
 
 ## Features
 
@@ -30,13 +24,13 @@ chassis.
 | Controller | ESP32 Dev Module |
 | Motor driver | TB6612FNG |
 | Motors | 2 x BO geared DC motors, differential drive |
-| Line sensors | 7 positions, **IR1 defective and unused**, 6 working (IR2..IR7) |
+| Line sensors | 7 digital inputs; IR1 (GPIO14) is reported defective on the reference robot but is still sampled and weighted by the firmware; IR2–IR7 are the six working sensors reported for the reference build |
 | Distance | VL53-series ToF, VL53L0X-compatible, I2C |
 | Gyro | available, **not used** by the sketch |
 | Power | 7.4 V battery, "Total 360" buck converter for the electronics |
 | Chassis | custom, about 250 mm long, about 190 mm wheel span/width |
 
-Details: [`docs/HARDWARE.md`](docs/HARDWARE.md), [`hardware/BOM.md`](hardware/BOM.md).
+Parts and verification notes: [`BOM.md`](BOM.md), [`PINOUT.md`](PINOUT.md), and [`POWER_ARCHITECTURE.md`](POWER_ARCHITECTURE.md).
 
 ## Electrical architecture
 
@@ -48,13 +42,13 @@ ESP32 3V3 --> TB6612FNG VCC (logic)        all grounds common
 ```
 
 The buck output voltage and current, the battery capacity and the motor ratings are not given in the
-project information: **USER MUST VERIFY** them. See [`hardware/POWER_ARCHITECTURE.md`](hardware/POWER_ARCHITECTURE.md).
+project information: **USER MUST VERIFY** them. See [`POWER_ARCHITECTURE.md`](POWER_ARCHITECTURE.md).
 
 ## Pinout
 
 | Function | GPIO | | Function | GPIO |
 |---|---:|---|---|---:|
-| PWMA (left speed) | 25 | | IR1 (**defective, unused**) | 14 |
+| PWMA (left speed) | 25 | | IR1 (reported defective; still sampled) | 14 |
 | AIN1 | 26 | | IR2 | 13 |
 | AIN2 | 27 | | IR3 | 16 |
 | STBY | 5 | | **IR4 (centre / reference)** | **17** |
@@ -65,20 +59,15 @@ project information: **USER MUST VERIFY** them. See [`hardware/POWER_ARCHITECTUR
 
 TB6612FNG: `VCC` to 3.3 V logic, `GND` common, `AO1/AO2` left motor, `BO1/BO2` right motor.
 Left motor: `AIN1`/`AIN2` set direction, `PWMA` sets speed. Right: `BIN1`/`BIN2` direction, `PWMB`
-speed. `STBY` enables the driver. Full tables: [`hardware/PINOUT.md`](hardware/PINOUT.md),
-[`docs/WIRING.md`](docs/WIRING.md).
+speed. `STBY` enables the driver. See [`PINOUT.md`](PINOUT.md) for the GPIO map and [`POWER_ARCHITECTURE.md`](POWER_ARCHITECTURE.md) for the power diagram and electrical checks. There is no separate wiring-document file in the current tree.
 
 ## Software architecture
 
-One sketch, `src/main.ino`. `loop()` runs on core 1; a ToF task runs on core 0 and publishes a snapshot
-that `loop()` copies once per tick. Control runs every `LOOP_US = 4000 us`, so `f = 1/0.004 = 250 Hz`. The
-obstacle logic is a non-blocking state machine inside `runStep()`.
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`diagrams/`](diagrams/).
+The sketch is [`main.ino`](main.ino). Its `loop()` control path runs at `LOOP_US = 4000 us` (250 Hz), while a ToF task pinned to core 0 publishes distance snapshots for the control loop; obstacle handling uses the non-blocking `runStep()` state machine. [`parameter_template.h`](parameter_template.h) is a reference worksheet and is not included by the firmware. Separate architecture and diagram files are not present in the current tree.
 
 ## Control algorithm
 
-Each sensor gives line / no line. Weights (IR1..IR7): `-3, -2, -1, 0, +1, +2, +3`; with IR1 unused the
-active weights are IR2 = -2 ... IR7 = +3, and IR4 (GPIO17) is the zero reference.
+Each sensor input gives line / no line. The firmware samples all seven inputs with weights (IR1..IR7) `-3, -2, -1, 0, +1, +2, +3`; IR4 (GPIO17) is the zero reference. **IR1 remains in this calculation despite being reported defective on the reference robot.** The code does not currently exclude it, so confirm its output is reliable before testing steering.
 
 ```
 pos   = sum(w_i * s_i) / sum(s_i)           err = pos   (positive = line on the right)
@@ -89,8 +78,7 @@ V_left = base + corr     V_right = base - corr     each constrained to [-MAX_REV
 
 No integral term: nothing to cancel on a flat track, and it would wind up during line loss. Lost line:
 `GAP_CROSS_MS = 180` ms of straight driving (or an edge-exit pivot), then a widening sweep for up to
-`SEARCH_TIMEOUT_MS = 3500` ms, then halt. Details:
-[`docs/CONTROL_ALGORITHM.md`](docs/CONTROL_ALGORITHM.md).
+`SEARCH_TIMEOUT_MS = 3500` ms, then halt. The implementation and tunable constants are in [`main.ino`](main.ino) and the non-included [`parameter_template.h`](parameter_template.h) worksheet.
 
 ## Obstacle avoidance mathematics
 
@@ -106,11 +94,7 @@ t_ms       = D_mm / V_mm_per_s * 1000      (DRIVE_MM_PER_SEC = 200)
 RIGHT_SHIFT_MS = 825 ms   FORWARD_PASS_MS = 2725 ms
 ```
 
-The stop value is 300 because `OBSTACLE_STOP_MM = 300` is set; the calculated floor would give 288.
-`DRIVE_MM_PER_SEC` is a placeholder: **measure it**. The formula limits (sign of the sensor offset, the
-absence of the offset in `D_forward`) are described in
-[`docs/CODE_VS_BRIEF_MISMATCHES.md`](docs/CODE_VS_BRIEF_MISMATCHES.md) M7. Everything:
-[`docs/MATHEMATICS.md`](docs/MATHEMATICS.md), [`docs/OBSTACLE_AVOIDANCE.md`](docs/OBSTACLE_AVOIDANCE.md).
+The stop value is 300 because `OBSTACLE_STOP_MM = 300` is set; the calculated minimum plus the 20 mm braking allowance would give 288. `DRIVE_MM_PER_SEC = 200` and the turn times are placeholders, not measured performance. Measure the robot geometry, straight-line speed, and turn timings on the actual chassis before relying on the detour. The firmware prints derived distances with serial command `g`; the constants are in [`main.ino`](main.ino).
 
 ### State machine
 
@@ -139,7 +123,7 @@ stateDiagram-v2
     RESUME --> FOLLOW_LINE
 ```
 
-Full diagram with all halt paths: [`diagrams/state_machine.md`](diagrams/state_machine.md).
+The diagram above summarizes the state flow implemented in `main.ino`; there is no separate diagram file in the current tree.
 
 ## Robot geometry
 
@@ -155,34 +139,28 @@ robot's values, not universal ones. `GEOMETRY_MEASURED` stays `false` until you 
 4. Calibrate `TURN_RIGHT_MS` / `TURN_LEFT_MS`.
 5. Run the detour test (`o`), then the full course.
 
-Full procedure, formulas, a 300 x 220 mm worked example and a parameter table:
-[`docs/ROBOT_SIZE_ADAPTATION.md`](docs/ROBOT_SIZE_ADAPTATION.md).
+Use [`parameter_template.h`](parameter_template.h) as a worksheet for the geometry and tuning constants. It is not included by the firmware; transfer only measured and verified values into `main.ino`.
 
 ## Calibration
 
-Order: motor direction and trim, IR hardware (height, pot, order, polarity), ToF, geometry,
-`DRIVE_MM_PER_SEC`, turn times, detour test. Procedure and printable checklist:
-[`docs/CALIBRATION.md`](docs/CALIBRATION.md).
+Order: motor direction and trim, IR hardware (height, pot, order, polarity), ToF, geometry, `DRIVE_MM_PER_SEC`, turn times, then the detour. In the Serial Monitor at 115200 baud, use `h` for help, `c` for calibration only, `i` for raw/active IR diagnostics, `v` for ToF distance, and `g` for derived geometry. The current repository does not include a separate calibration checklist.
 
 ## Parameter tuning
 
-Start at a low `BASE_SPEED`, tune `KP` until curves are followed but the robot starts to oscillate, add
-`KD` to damp it, then raise speed in steps. Symptom table: [`docs/TUNING.md`](docs/TUNING.md).
+Start at a low `BASE_SPEED`, tune `KP` until curves are followed but the robot starts to oscillate, add `KD` to damp it, then raise speed in small steps. The constants are in [`main.ino`](main.ino); [`parameter_template.h`](parameter_template.h) is a non-included worksheet, not a second source of firmware settings.
 
 ## Build instructions
 
 1. Assemble the chassis, mount the sensor bar rigidly across the front with IR4 on the centreline,
    mount the ToF sensor facing forward on the centreline.
-2. Wire everything according to [`docs/WIRING.md`](docs/WIRING.md). Verify the buck converter's output
-   voltage before connecting the ESP32; verify battery polarity.
+2. Wire everything using [`PINOUT.md`](PINOUT.md) and [`POWER_ARCHITECTURE.md`](POWER_ARCHITECTURE.md). Verify the buck converter's output voltage before connecting the ESP32; verify battery polarity and common ground.
 3. Adjust the potentiometer on each IR module so it switches cleanly between line and floor.
 
 ## Upload instructions
 
 1. Arduino IDE with the ESP32 board package (core 2.x or 3.x). Board: **ESP32 Dev Module**.
 2. Library Manager: install **Adafruit VL53L0X** (it pulls in Adafruit BusIO).
-3. Arduino requires a sketch to sit in a folder with the same name: open `src/main.ino` and accept the prompt to
-   move it into a folder named `main`, or copy it into a folder called `main` yourself.
+3. Open the root-level `main.ino` in Arduino IDE. If the IDE asks to place the sketch in a folder named `main`, accept the prompt or make a `main/` folder and place a copy of `main.ino` there.
 4. Select the port, upload, open the Serial Monitor at **115200 baud**.
 5. The start-up log should show `VL53L0X OK`, then the geometry and a warning if `GEOMETRY_MEASURED` is `false`.
 
@@ -205,7 +183,13 @@ Never start at full speed.
 
 ## Troubleshooting
 
-[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) has a table of problems, causes, tests and fixes.
+| Symptom | Checks |
+|---|---|
+| Calibration fails | Place IR4 on the line and IR1, IR2, IR6, and IR7 on the floor as the firmware expects. Adjust each sensor module's potentiometer until black and white produce stable digital levels, then send `c` and read the Serial Monitor output. |
+| Steering jumps or the line position looks wrong | The firmware still samples and weights IR1 (GPIO14) even though it is reported defective on the reference robot. Check its output and wiring; do not assume it is ignored. |
+| ToF sensor is not found or readings are stale | Check sensor power and logic levels, SDA GPIO21, SCL GPIO22, and the Adafruit VL53L0X library. Use serial command `v` to inspect distance readings. |
+| Motors move in the wrong direction or the ESP32 resets | Lift the wheels before motor tests. Recheck the motor-driver wiring, common ground, battery polarity, and buck-converter output under load; see [`POWER_ARCHITECTURE.md`](POWER_ARCHITECTURE.md). |
+| Robot halts after losing the line | Check sensor height/order/polarity and calibration. The current lost-line search is bounded by `SEARCH_TIMEOUT_MS`; it is designed to halt rather than search forever. |
 
 ## Safety notes
 
@@ -215,6 +199,7 @@ Never start at full speed.
 - Use short, thick wiring for motor current; keep logic wiring away.
 - The sketch has no battery monitoring and no stall detection. Stop the robot (`s` or BOOT) if it misbehaves.
 - The detour assumes the right side is free: the robot does not check.
+- IR1 (GPIO14) is known defective on the reference robot but is still sampled and weighted; the current firmware does not mask it.
 
 ## Future improvements
 
@@ -225,12 +210,18 @@ that the right side is free.
 ## Repository layout
 
 ```
-src/main.ino              the sketch
-docs/                     architecture, algorithm, obstacle logic, calibration, tuning, adaptation, math
-hardware/                 BOM, pinout, power architecture
-diagrams/                 system architecture, state machine, geometry
-examples/parameter_template.h   worksheet of every constant
+main.ino                  ESP32 competition sketch and control logic
+parameter_template.h      reference worksheet; not included by the firmware
+BOM.md                    bill of materials and items to verify
+PINOUT.md                 GPIO and motor-driver pin map
+POWER_ARCHITECTURE.md     power diagram, supply checks, troubleshooting
+CONTRIBUTING.md            contribution guidance
+CODE_OF_CONDUCT.md         community conduct
+LICENSE                   MIT license text (copyright holder is still a placeholder)
+download                  contains ignore-pattern text but is not named .gitignore
 ```
+
+The root file `download` contains ignore patterns, but Git does not apply them as ignore rules under that filename. It was left in place rather than renamed during this documentation-only pass.
 
 ## License
 
