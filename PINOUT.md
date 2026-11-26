@@ -1,6 +1,6 @@
 # Pinout
 
-Source of truth: the top of `src/main.ino`. Do not change the map.
+Source of truth: the pin definitions and `IR_PIN` array at the top of [`main.ino`](main.ino). Do not change the map without checking the firmware and wiring.
 
 ## Motor driver (TB6612FNG)
 
@@ -22,7 +22,7 @@ Source of truth: the top of `src/main.ino`. Do not change the map.
 
 | Sensor | GPIO | Weight in `W[]` | Status |
 |---|---:|---:|---|
-| IR1 | 14 | -3 | **DEFECTIVE: DO NOT USE** (reserved; still scanned by the sketch, M1) |
+| IR1 | 14 | -3 | **Reported defective on the reference robot; still sampled and included in the weighted position by the firmware. It is not masked.** |
 | IR2 | 13 | -2 | active |
 | IR3 | 16 | -1 | active |
 | IR4 | 17 | 0 | active, **centre / reference, must remain GPIO17** |
